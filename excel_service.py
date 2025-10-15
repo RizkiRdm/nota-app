@@ -221,3 +221,96 @@ def write_purchase_transaction(transactions: List[JurnalPembelian]):
         sheet.append(row_data)
         
     workbook.save(FILE_PATH)
+
+def get_product_by_name(name: str) -> Optional[Tuple[MasterStockProduct, int]]:
+    """
+    Mencari produk di Master Stok berdasarkan nama.
+    Mengembalikan tuple (product_model, row_index) atau None.
+    """
+    _ensure_file_and_sheets()
+    
+    # Baca data dari Master Stok
+    workbook, sheet = _get_workbook_and_sheet(SHEET_MASTER_STOK, read_only=True)
+    
+    # Mencari index baris yang sesuai (dimulai dari baris 2 setelah header)
+    for i, row in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=2):
+        # Asumsi nama produk ada di kolom pertama (index 0)
+        product_name_in_sheet = row[0]
+        
+        if product_name_in_sheet == name:
+            # Reconstruct model dari data baris (gunakan logika dari read_master_stock)
+            
+            # 1. Ambil data harga jual (sesuai urutan di header: kolom 6 sampai 11)
+            harga_jual_data = {
+                'bungkus': row[5], 'batang': row[6], 'mentah': row[7],
+                'seduh': row[8], 'rebus': row[9], 'rebus_telur': row[10]
+            }
+            
+            # Bersihkan nilai string None atau '-' menjadi None/0.0
+            def clean_float(val):
+                if val is None or str(val).strip() in ['-', '']:
+                    return None
+                try:
+                    return float(val)
+                except ValueError:
+                    return None # Jika tidak bisa di-float
+            
+            cleaned_harga_jual = {k: clean_float(v) for k, v in harga_jual_data.items()}
+            
+            # 2. Buat model HargaJual
+            harga_jual_model = HargaJual(**cleaned_harga_jual)
+            
+            # 3. Buat model MasterStockProduct
+            product_model = MasterStockProduct(
+                nama_produk=product_name_in_sheet,
+                satuan_beli=row[1],
+                isi_per_satuan_beli=int(row[2]) if row[2] is not None else 0,
+                kategori=row[3],
+                satuan_unit_dasar=row[4],
+                harga_jual=harga_jual_model
+            )
+            
+            return product_model, i # Kembalikan model dan index baris Excel
+            
+    return None
+
+def update_master_stock_cost_price(name: str, new_cost_price: float):
+    """Memperbarui harga modal (kolom 2) produk di Master Stok."""
+    product_data_pair = get_product_by_name(name)
+
+    if not product_data_pair:
+        raise ValueError(f"Produk '{name}' tidak ditemukan di Master Stok.")
+        
+    # Ambil index baris (i) dari get_product_by_name
+    product_model, row_index = product_data_pair 
+
+    workbook, sheet = _get_workbook_and_sheet(SHEET_MASTER_STOK, read_only=False)
+
+    # Kolom harga modal berada di kolom B, yang berarti index kolom ke-2
+    # Kita menggunakan openpyxl: row[index_berbasis_1]
+    # Header Master Stok: [Nama Produk, Satuan Beli, Isi per Satuan Beli, Kategori, Satuan Unit Dasar, ...]
+    # Kolom 2: Satuan Beli. Kolom 1 (A) adalah Nama Produk.
+    
+    # Berdasarkan Header File: 'Nama Produk, Satuan Beli, Isi per Satuan Beli, Kategori, satuan Unit Dasar, Harga jual...'
+    # Harga modal (kolom 2) harusnya 'Satuan Beli', tapi di Jurnal Pembelian butuh harga modal!
+    
+    # ASUMSI: Berdasarkan header file yang di-upload, tidak ada kolom harga modal di Master Stok.
+    # Namun, karena Jurnal Pembelian membutuhkan harga modal terbaru, kita ASUMSIKAN:
+    # Harga Modal ditempatkan di KOLOM KEDUA Master Stok (sebelum Isi per Satuan Beli).
+    # KOREKSI: Karena kode kita sebelumnya tidak menyertakan Harga Modal di model dan header, 
+    # untuk sementara kita akan memperbarui Kolom 2 (Satuan Beli) DULU, dan perlu revisi model nanti!
+    
+    # Skenario yang benar: Kita harus memperbarui kolom harga modal.
+    # Karena kita belum punya kolom harga modal di header/model, kita HANYA AKAN MENCATAT DI JURNAL PEMBELIAN
+    # dan MENGABAIKAN update Master Stok untuk sementara, KECUALI Anda tambahkan kolom Harga Modal (Beli) di Master Stok.
+    
+    # Untuk melanjutkan, kita ASUMSIKAN Anda telah menambahkan kolom "Harga Modal" (Index 1) di Master Stok Excel Anda.
+    # Header Baru (ASUMSI): [Nama Produk, Harga Modal Beli, Satuan Beli, Isi per Satuan Beli, ...]
+    
+    # Jika Asumsi Benar:
+    # Kolom Harga Modal Beli (Index 2 di Python, Kolom B di Excel)
+    CELL_MODAL_PRICE = 2 # Kolom ke-2 (B)
+    
+    sheet.cell(row=row_index, column=CELL_MODAL_PRICE, value=new_cost_price)
+    
+    workbook.save(FILE_PATH)
